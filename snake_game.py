@@ -6,7 +6,7 @@
   蓝蛇：惯性随机游走（爱直行，偶尔朝食物靠）
 
 规则：
-  · 蛇撞墙 / 撞自己 / 撞别的蛇 => 出局，底部面板显示"X色蛇出局：原因"
+  · 蛇撞墙 / 撞自己 / 撞别的蛇 /吃缩短食物把自己吃没了 => 出局，底部面板显示"X色蛇出局：原因"
   · 场上只剩最后一条蛇 => 显示"X色蛇获胜！"，游戏结束
 """
 
@@ -27,6 +27,7 @@ HEIGHT   = ROWS * CELL + PANEL_H
 FPS      = 60
 STEP_MS  = 110
 FOOD_NUM = 3
+POISON_NUM = 3       #  新增：缩短食物数量
 
 DIRS = {
     'up':    (0, -1),
@@ -46,7 +47,7 @@ BG_COLOR   = (26, 28, 38)
 GRID_COLOR = (40, 42, 56)
 PANEL_BG   = (16, 17, 24)
 FOOD_COLOR = (255, 214, 64)
-
+POISON_COLOR = (220, 50, 180)     #  新增：品红：缩短食物
 
 # ==================== 小工具 ====================
 def in_bounds(p):
@@ -191,25 +192,40 @@ class Game:
             Snake('蓝', [(COLS // 2, 3), (COLS // 2, 2), (COLS // 2, 1)], 'down', strategy_blue),
         ]
         self.foods = []
+        self.poison_foods = []                                    #  新增：缩短食物列表
         self.messages = []
         self.over = False
         self.winner = None
 
         for _ in range(FOOD_NUM):
             self.spawn_food()
+        for _ in range(POISON_NUM):                               #  新增：初始生成缩短食物
+            self.spawn_poison_food()
 
-    def spawn_food(self):
+
+ # ---------- 食物生成 ----------
+    def _free_cells(self):                                        #  新增：统一空格计算
         occupied = set()
         for s in self.snakes:
             if s.alive:
                 occupied.update(s.body)
         occupied.update(self.foods)
-
-        free = [(x, y) for x in range(COLS) for y in range(ROWS)
+        occupied.update(self.poison_foods)                        #  新增：缩短食物也避开
+        return [(x, y) for x in range(COLS) for y in range(ROWS)
                 if (x, y) not in occupied]
+
+    def spawn_food(self):
+        free = self._free_cells()                                 #  修改：用 _free_cells
         if not free:
             return False
         self.foods.append(random.choice(free))
+        return True
+
+    def spawn_poison_food(self):                                  #  新增：生成缩短食物
+        free = self._free_cells()
+        if not free:
+            return False
+        self.poison_foods.append(random.choice(free))
         return True
 
     def step(self):
@@ -234,9 +250,18 @@ class Game:
             if not in_bounds(h):
                 deaths[s] = "撞到墙壁"
                 continue
+            
+            ate_normal = h in self.foods                        #  新增
+            ate_poison = h in self.poison_foods                 #  新增
 
-            ate = h in self.foods
-            own_body = s.body if ate else s.body[:-1]
+            # ★ 修改：精确判定自撞（区分普通食物 / 缩短食物 / 普通移动）
+            if ate_normal:
+                own_body = s.body                               # 尾巴不缩
+            elif ate_poison:
+                own_body = s.body[:-2] if len(s.body) > 2 else s.body[:-1]  # 尾巴缩两格
+            else:
+                own_body = s.body[:-1]                          # 普通移动缩一格
+
             if h in own_body:
                 deaths[s] = "撞到自己身体"
                 continue
@@ -260,12 +285,33 @@ class Game:
                 continue
             s.direction = new_dirs[s]
             h = heads[s]
-            ate = h in self.foods
-            if ate:
+            
+            ate_normal = h in self.foods                        # 新增
+            ate_poison = h in self.poison_foods                 # 新增
+
+            if ate_normal:
+                # 普通食物：生长（插头，不删尾）
                 self.foods.remove(h)
-            s.body.insert(0, h)
-            if not ate:
+                s.body.insert(0, h)
+
+            elif ate_poison:                                    # 新增：缩短食物分支
+                # 缩短食物：插头后删两格尾巴（净缩短 1）
+                self.poison_foods.remove(h)
+                s.body.insert(0, h)
+                if len(s.body) < 4:      # 缩短后长度 < 2 → 死亡
+                    s.alive = False
+                    s.death_reason = "吃下缩短食物后身体长度不足"
+                    self.messages.append(
+                        (f"{s.name}色蛇出局：吃下缩短食物后身体长度不足", s.color))
+                    continue
                 s.body.pop()
+                s.body.pop()
+
+            else:
+                # 普通移动
+                s.body.insert(0, h)
+                s.body.pop()
+
 
         for s in alive:
             if s in deaths:
@@ -276,7 +322,10 @@ class Game:
         while len(self.foods) < FOOD_NUM:
             if not self.spawn_food():
                 break
-
+        while len(self.poison_foods) < POISON_NUM:              # ★ 新增：补充缩短食物
+            if not self.spawn_poison_food():
+                break
+       
         remaining = [s for s in self.snakes if s.alive]
         if len(remaining) == 1:
             self.over = True
@@ -311,6 +360,17 @@ class Game:
             cy = f[1] * CELL + CELL // 2
             pygame.draw.circle(screen, FOOD_COLOR, (cx, cy), CELL // 2 - 2)
             pygame.draw.circle(screen, (255, 250, 210), (cx - 2, cy - 2), 2)
+            # 缩短食物：品红圆点 + 白色 ×                          # 新增：绘制缩短食物
+        for f in self.poison_foods:
+            cx = f[0] * CELL + CELL // 2
+            cy = f[1] * CELL + CELL // 2
+            r = CELL // 2 - 2
+            pygame.draw.circle(screen, POISON_COLOR, (cx, cy), r)
+            d = 4
+            pygame.draw.line(screen, (255, 255, 255),
+                             (cx - d, cy - d), (cx + d, cy + d), 2)
+            pygame.draw.line(screen, (255, 255, 255),
+                             (cx - d, cy + d), (cx + d, cy - d), 2)
 
         pygame.draw.rect(screen, PANEL_BG, (0, board_h, WIDTH, PANEL_H))
         pygame.draw.line(screen, (90, 92, 120), (0, board_h), (WIDTH, board_h), 2)
