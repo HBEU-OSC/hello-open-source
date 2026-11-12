@@ -13,6 +13,7 @@
 import sys
 import os
 import random
+import argparse
 from collections import deque
 import pygame
 
@@ -250,7 +251,7 @@ class Game:
             if not in_bounds(h):
                 deaths[s] = "撞到墙壁"
                 continue
-            
+
             ate_normal = h in self.foods                        #  新增
             ate_poison = h in self.poison_foods                 #  新增
 
@@ -285,7 +286,7 @@ class Game:
                 continue
             s.direction = new_dirs[s]
             h = heads[s]
-            
+
             ate_normal = h in self.foods                        # 新增
             ate_poison = h in self.poison_foods                 # 新增
 
@@ -325,7 +326,7 @@ class Game:
         while len(self.poison_foods) < POISON_NUM:              # ★ 新增：补充缩短食物
             if not self.spawn_poison_food():
                 break
-       
+
         remaining = [s for s in self.snakes if s.alive]
         if len(remaining) == 1:
             self.over = True
@@ -385,6 +386,54 @@ class Game:
             surf = font.render("三条蛇正在自由竞技……", True, (150, 150, 170))
             screen.blit(surf, (14, board_h + 10))
 
+# ==================== 批量模拟 ====================
+def run_simulations(n_games, max_steps=10000):
+    if n_games <= 0:
+        raise ValueError("n_games must be greater than 0")
+
+    if max_steps <= 0:
+        raise ValueError("max_steps must be greater than 0")
+
+    stats = {
+        "wins": {"红": 0, "绿": 0, "蓝": 0},
+        "draws": 0,
+        "timeouts": 0,
+        "total": n_games,
+    }
+
+    for _ in range(n_games):
+        game = Game()
+        steps = 0
+
+        while not game.over and steps < max_steps:
+            game.step()
+            steps += 1
+
+        if not game.over:
+            stats["timeouts"] += 1
+        elif game.winner is None:
+            stats["draws"] += 1
+        else:
+            stats["wins"][game.winner.name] += 1
+
+    return stats
+
+
+def print_simulation_results(stats):
+    total = stats["total"]
+
+    print(f"\nSimulation results ({total} games)\n")
+
+    for name, color in [("红", "Red"), ("绿", "Green"), ("蓝", "Blue")]:
+        wins = stats["wins"][name]
+        rate = wins / total * 100
+        print(f"{color}: {wins} wins ({rate:.2f}%)")
+
+    draws = stats["draws"]
+    timeouts = stats["timeouts"]
+
+    print(f"\nDraws: {draws} ({draws / total * 100:.2f}%)")
+    print(f"Timeouts: {timeouts} ({timeouts / total * 100:.2f}%)")
 
 # ==================== 主循环 ====================
 def main():
@@ -446,5 +495,37 @@ def main():
     sys.exit()
 
 
+
+def cli():
+    parser = argparse.ArgumentParser(
+        description="三蛇争霸：自动对战与胜率统计"
+    )
+    parser.add_argument(
+        "--simulate",
+        type=int,
+        metavar="N",
+        help="模拟N 局游戏并统计其胜率"
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=10000,
+        help="每局最大步数（默认：10000）"
+    )
+
+    args = parser.parse_args()
+
+    if args.simulate is not None:
+        if args.simulate <= 0:
+            parser.error("--simulate must be greater than 0")
+        if args.max_steps <= 0:
+            parser.error("--max-steps must be greater than 0")
+
+        stats = run_simulations(args.simulate, args.max_steps)
+        print_simulation_results(stats)
+    else:
+        main()
+
+
 if __name__ == "__main__":
-    main()
+    cli()
